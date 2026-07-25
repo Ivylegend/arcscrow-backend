@@ -44,7 +44,7 @@ async def _new_session(db: Db, response: Response, user: User) -> AuthOut:
         access,
         httponly=True,
         secure=settings.cookie_secure,
-        samesite="lax",
+        samesite=settings.cookie_samesite,
         max_age=900,
         path="/",
     )
@@ -53,12 +53,17 @@ async def _new_session(db: Db, response: Response, user: User) -> AuthOut:
         refresh,
         httponly=True,
         secure=settings.cookie_secure,
-        samesite="strict",
+        samesite=settings.cookie_samesite,
         max_age=2_592_000,
         path=f"{settings.api_prefix}/auth",
     )
     csrf = random_token()
-    response.set_cookie("arcscrow_csrf", csrf, secure=settings.cookie_secure, samesite="lax")
+    response.set_cookie(
+        "arcscrow_csrf",
+        csrf,
+        secure=settings.cookie_secure,
+        samesite=settings.cookie_samesite,
+    )
     await db.commit()
     return AuthOut(user=UserOut.model_validate(user), csrf_token=csrf)
 

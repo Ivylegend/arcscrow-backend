@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -16,6 +17,7 @@ class Settings(BaseSettings):
     frontend_url: str = "http://localhost:5173"
     allowed_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
     cookie_secure: bool = False
+    cookie_samesite: Literal["lax", "strict", "none"] = "lax"
     ai_provider: str = "development"
     openai_api_key: str = ""
     openai_model: str = "gpt-5-mini"
