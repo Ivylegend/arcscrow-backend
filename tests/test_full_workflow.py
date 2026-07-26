@@ -76,6 +76,23 @@ async def test_complete_deal_lifecycle_uses_persisted_parties_and_verified_event
     )
     assert invitation.status_code == 201, invitation.text
     invite_token = invitation.json()["accept_token"]
+
+    replacement = await client.post(
+        f"/api/v1/deals/{deal['id']}/invitations",
+        json={
+            "email": "seller-flow@example.com",
+            "wallet_address": seller_account.address,
+            "role": "SELLER",
+        },
+    )
+    assert replacement.status_code == 201, replacement.text
+    replacement_token = replacement.json()["accept_token"]
+    assert replacement_token != invite_token
+    assert (
+        await client.get(f"/api/v1/invitations/resolve/{invite_token}")
+    ).status_code == 404
+    invite_token = replacement_token
+
     preview = await client.get(f"/api/v1/invitations/resolve/{invite_token}")
     assert preview.status_code == 200, preview.text
     assert preview.json()["deal_title"] == "Complete Arc workflow"

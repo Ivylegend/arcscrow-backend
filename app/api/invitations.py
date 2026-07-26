@@ -82,7 +82,25 @@ async def create_invitation(
         )
     )
     if existing and existing.status == "PENDING":
-        raise HTTPException(status.HTTP_409_CONFLICT, "This invitation is already pending")
+        raw_token = random_token()
+        existing.wallet_address = (
+            payload.wallet_address.lower() if payload.wallet_address else None
+        )
+        existing.token_hash = token_hash(raw_token)
+        existing.expires_at = datetime.now(UTC) + timedelta(days=7)
+        await append_evidence(
+            db,
+            deal_id=deal.id,
+            evidence_type="PARTY_INVITATION_REISSUED",
+            actor_id=user.id,
+            source_entity_type="deal_invitation",
+            source_entity_id=str(existing.id),
+            payload={"email": email, "role": payload.role.value},
+        )
+        await db.commit()
+        return InvitationOut.model_validate(existing).model_copy(
+            update={"accept_token": raw_token}
+        )
 
     raw_token = random_token()
     invitation = DealInvitation(
