@@ -42,6 +42,9 @@ async def test_create_deal_validates_allocations_and_lists_it(client):
     listed = await client.get("/api/v1/deals")
     assert listed.status_code == 200
     assert listed.json()[0]["title"] == "Commerce redesign"
+    messages = await client.get(f"/api/v1/deals/{created.json()['id']}/messages")
+    assert messages.status_code == 200
+    assert messages.json() == []
 
 
 async def test_rejects_inconsistent_financial_allocation(client):

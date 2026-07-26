@@ -48,6 +48,10 @@ class WalletVerifyIn(BaseModel):
     signature: str
 
 
+class WalletLinkIn(WalletVerifyIn):
+    pass
+
+
 class MilestoneCreate(BaseModel):
     title: str = Field(min_length=2, max_length=200)
     description: str = Field(min_length=2, max_length=5000)
@@ -66,6 +70,13 @@ class DealCreate(BaseModel):
     token_symbol: str = "USDC"
     token_decimals: int = Field(default=6, ge=0, le=18)
     funding_threshold_bps: int = Field(default=5_000, gt=0, le=10_000)
+    buyer_wallet_address: str | None = Field(
+        default=None, pattern=r"^0x[a-fA-F0-9]{40}$"
+    )
+    seller_email: EmailStr | None = None
+    seller_wallet_address: str | None = Field(
+        default=None, pattern=r"^0x[a-fA-F0-9]{40}$"
+    )
     milestones: list[MilestoneCreate] = Field(min_length=1, max_length=50)
 
     @field_validator("milestones")
@@ -89,6 +100,11 @@ class MilestoneOut(BaseModel):
     rejection_count: int
     acceptance_criteria: list[dict[str, object]]
     due_at: datetime | None
+    submission_note: str | None
+    submission_hash: str | None
+    submission_transaction_hash: str | None
+    approval_transaction_hash: str | None
+    release_transaction_hash: str | None
 
 
 class PartyOut(BaseModel):
@@ -97,6 +113,9 @@ class PartyOut(BaseModel):
     user_id: UUID
     role: DealRole
     permissions: dict[str, object]
+    wallet_address: str | None
+    accepted_at: datetime | None
+    acceptance_transaction_hash: str | None
 
 
 class DealOut(BaseModel):
@@ -117,6 +136,7 @@ class DealOut(BaseModel):
     refunded_amount: int
     funding_threshold_bps: int
     onchain_deal_id: str | None
+    registration_transaction_hash: str | None
     version: int
     parties: list[PartyOut] = []
     milestones: list[MilestoneOut] = []
@@ -133,9 +153,165 @@ class FundingIn(BaseModel):
     simulated: bool = False
 
 
+class InvitationCreate(BaseModel):
+    email: EmailStr
+    wallet_address: str | None = Field(default=None, pattern=r"^0x[a-fA-F0-9]{40}$")
+    role: DealRole = DealRole.SELLER
+
+
+class InvitationOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    deal_id: UUID
+    email: str
+    wallet_address: str | None
+    role: DealRole
+    status: str
+    expires_at: datetime
+    accept_token: str | None = None
+
+
+class InvitationAccept(BaseModel):
+    token: str = Field(min_length=32, max_length=256)
+    wallet_address: str | None = Field(default=None, pattern=r"^0x[a-fA-F0-9]{40}$")
+
+
+class InvitationAcceptById(BaseModel):
+    wallet_address: str | None = Field(default=None, pattern=r"^0x[a-fA-F0-9]{40}$")
+
+
+class AgreementOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    version: int
+    structured_terms: dict[str, object]
+    content_hash: str
+    created_by: UUID
+    created_at: datetime
+
+
+class AgreementAcceptIn(BaseModel):
+    transaction_hash: str | None = Field(default=None, pattern=r"^0x[a-fA-F0-9]{64}$")
+
+
+class OnchainPrepareOut(BaseModel):
+    deal_id: str
+    agreement_hash: str
+    token: str
+    funding_required: int
+    funding_threshold_bps: int
+    parties: list[str]
+    roles: list[int]
+    allocations: list[int]
+    recipients: list[str]
+
+
+class TransactionIn(BaseModel):
+    transaction_hash: str = Field(pattern=r"^0x[a-fA-F0-9]{64}$")
+
+
+class MilestoneSubmitIn(TransactionIn):
+    note: str = Field(min_length=3, max_length=10_000)
+    evidence_hash: str = Field(pattern=r"^0x[a-fA-F0-9]{64}$")
+
+
+class DisputeCreateIn(TransactionIn):
+    reason: str = Field(min_length=5, max_length=10_000)
+    requested_outcome: str = Field(min_length=2, max_length=64)
+    evidence_hash: str = Field(pattern=r"^0x[a-fA-F0-9]{64}$")
+
+
+class DisputeOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    deal_id: UUID
+    milestone_id: UUID
+    opened_by: UUID
+    reason: str
+    requested_outcome: str
+    status: str
+    ruling: dict[str, object] | None
+    created_at: datetime
+
+
+class BlockchainEventOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    transaction_hash: str
+    block_number: int
+    event_name: str
+    decoded_data: dict[str, object]
+    status: str
+    created_at: datetime
+
+
+class DealSuggestionIn(BaseModel):
+    prompt: str = Field(min_length=20, max_length=10_000)
+    total_amount: int | None = Field(default=None, gt=0)
+
+
+class SuggestedMilestone(BaseModel):
+    title: str
+    description: str
+    percentage: int = Field(gt=0, le=100)
+    acceptance_criteria: list[str]
+
+
+class DealSuggestionOut(BaseModel):
+    title: str
+    description: str
+    suggested_total_amount: int | None = Field(default=None, gt=0)
+    milestones: list[SuggestedMilestone] = Field(min_length=1, max_length=10)
+    assumptions: list[str]
+
+
+class WalletIdentityOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    address: str
+    chain_namespace: str
+    wallet_type: str
+
+
+class NotificationOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    kind: str
+    title: str
+    body: str
+    deep_link: str | None
+    read_at: datetime | None
+    created_at: datetime
+
+
+class ProfileUpdate(BaseModel):
+    display_name: str = Field(min_length=2, max_length=120)
+
+
+class OrganisationCreate(BaseModel):
+    name: str = Field(min_length=2, max_length=160)
+    slug: str = Field(pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$", min_length=2, max_length=80)
+
+
+class OrganisationOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    name: str
+    slug: str
+    owner_id: UUID
+    created_at: datetime
+
+
 class MessageIn(BaseModel):
     content: str = Field(min_length=1, max_length=10_000)
     parent_id: UUID | None = None
+
+
+class MessageOut(BaseModel):
+    id: UUID
+    author_id: UUID
+    content: str
+    created_at: datetime
 
 
 class EvidenceOut(BaseModel):

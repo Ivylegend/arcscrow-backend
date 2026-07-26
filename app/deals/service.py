@@ -60,7 +60,7 @@ def apply_funding(deal: Deal, amount: int) -> None:
     threshold_reached = (
         deal.funded_amount * 10_000 >= deal.total_amount * deal.funding_threshold_bps
     )
-    deal.status = DealStatus.READY_TO_START if threshold_reached else DealStatus.PARTIALLY_FUNDED
+    deal.status = DealStatus.ACTIVE if threshold_reached else DealStatus.PARTIALLY_FUNDED
     deal.version += 1
 
 

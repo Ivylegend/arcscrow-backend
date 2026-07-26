@@ -1,3 +1,4 @@
+import json
 from functools import lru_cache
 from typing import Literal
 
@@ -6,7 +7,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=(".env", ".env.local"),
+        enable_decoding=False,
+        extra="ignore",
+    )
 
     environment: str = "development"
     app_name: str = "Arcscrow API"
@@ -15,29 +20,62 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
     session_secret: str = "development-only-session-secret-change-me"
     frontend_url: str = "http://localhost:5173"
-    allowed_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
+    allowed_origins: list[str] = Field(
+        default_factory=lambda: [
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+        ]
+    )
     cookie_secure: bool = False
     cookie_samesite: Literal["lax", "strict", "none"] = "lax"
     ai_provider: str = "development"
     openai_api_key: str = ""
     openai_model: str = "gpt-5-mini"
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-2.5-flash"
+    gemini_model: str = "gemini-3.5-flash"
     circle_api_key: str = ""
     circle_entity_secret: str = ""
     circle_wallet_set_id: str = ""
+    circle_embedded_wallet_enabled: bool = False
     arc_chain_id: int = 5_042_002
     arc_rpc_url: str = "https://rpc.testnet.arc.network"
+    arc_rpc_fallback_urls: list[str] = Field(
+        default_factory=lambda: [
+            "https://rpc.drpc.testnet.arc.network",
+            "https://rpc.quicknode.testnet.arc.network",
+            "https://rpc.blockdaemon.testnet.arc.network",
+        ]
+    )
     arc_ws_url: str = "wss://rpc.testnet.arc.network"
     arc_explorer_url: str = "https://testnet.arcscan.app"
     arc_usdc_address: str = "0x3600000000000000000000000000000000000000"
     arcscrow_escrow_address: str = ""
+    token_registry_address: str = ""
     metrics_enabled: bool = True
 
-    @field_validator("allowed_origins", mode="before")
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def async_postgres_url(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        if value.startswith("postgresql://"):
+            return value.replace("postgresql://", "postgresql+asyncpg://", 1)
+        if value.startswith("postgres://"):
+            return value.replace("postgres://", "postgresql+asyncpg://", 1)
+        return value
+
+    @field_validator("allowed_origins", "arc_rpc_fallback_urls", mode="before")
     @classmethod
     def split_origins(cls, value: object) -> object:
         if isinstance(value, str):
+            stripped = value.strip()
+            if stripped.startswith("["):
+                parsed = json.loads(stripped)
+                if not isinstance(parsed, list) or not all(
+                    isinstance(origin, str) for origin in parsed
+                ):
+                    raise ValueError("Value must be a JSON list of strings")
+                return parsed
             return [part.strip() for part in value.split(",") if part.strip()]
         return value
 

@@ -54,6 +54,41 @@ class DevelopmentAIProvider:
                 provider="development-simulation",
                 model="deterministic-stub",
             )
+        if schema.__name__ == "DealSuggestionOut":
+            return schema.model_validate(
+                {
+                    "title": "Structured service agreement",
+                    "description": (
+                        "Deliver the requested work through objective milestones with explicit "
+                        "buyer acceptance and Arc testnet settlement."
+                    ),
+                    "suggested_total_amount": None,
+                    "milestones": [
+                        {
+                            "title": "Plan and initial delivery",
+                            "description": "Confirm scope and provide the first reviewable delivery.",
+                            "percentage": 40,
+                            "acceptance_criteria": [
+                                "Scope is documented",
+                                "Initial delivery is available for review",
+                            ],
+                        },
+                        {
+                            "title": "Final delivery",
+                            "description": "Complete revisions and provide all final deliverables.",
+                            "percentage": 60,
+                            "acceptance_criteria": [
+                                "All agreed deliverables are supplied",
+                                "Buyer confirms the final acceptance criteria",
+                            ],
+                        },
+                    ],
+                    "assumptions": [
+                        "Milestone values can be adjusted before the agreement is accepted.",
+                        "AI suggestions are proposals and require explicit party approval.",
+                    ],
+                }
+            )
         raise ValueError(f"Development adapter has no fixture for {schema.__name__}")
 
 
@@ -88,8 +123,37 @@ class OpenAIProvider:
             return schema.model_validate_json(body["output"][0]["content"][0]["text"])
 
 
+@dataclass
+class GeminiProvider:
+    api_key: str
+    model: str
+
+    async def generate_structured(
+        self, *, system: str, prompt: str, schema: type[BaseModel]
+    ) -> BaseModel:
+        async with httpx.AsyncClient(timeout=45) as client:
+            response = await client.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent",
+                headers={"x-goog-api-key": self.api_key},
+                json={
+                    "systemInstruction": {"parts": [{"text": system}]},
+                    "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                    "generationConfig": {
+                        "responseMimeType": "application/json",
+                        "responseJsonSchema": schema.model_json_schema(),
+                    },
+                },
+            )
+            response.raise_for_status()
+            body: dict[str, Any] = response.json()
+            text = body["candidates"][0]["content"]["parts"][0]["text"]
+            return schema.model_validate_json(text)
+
+
 def get_ai_provider() -> AIProvider:
     settings = get_settings()
     if settings.ai_provider == "openai" and settings.openai_api_key:
         return OpenAIProvider(settings.openai_api_key, settings.openai_model)
+    if settings.ai_provider == "gemini" and settings.gemini_api_key:
+        return GeminiProvider(settings.gemini_api_key, settings.gemini_model)
     return DevelopmentAIProvider()

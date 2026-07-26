@@ -3,6 +3,8 @@ import os
 os.environ["ENVIRONMENT"] = "test"
 os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///./test_arcscrow.db"
 os.environ["SESSION_SECRET"] = "test-session-secret-that-is-long-enough"
+os.environ["AI_PROVIDER"] = "development"
+os.environ["CIRCLE_EMBEDDED_WALLET_ENABLED"] = "false"
 
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient

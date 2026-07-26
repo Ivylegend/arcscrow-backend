@@ -155,6 +155,7 @@ class Deal(Base, UUIDMixin, TimestampMixin):
     refunded_amount: Mapped[int] = mapped_column(BigInteger, default=0)
     funding_threshold_bps: Mapped[int] = mapped_column(Integer, default=5_000)
     onchain_deal_id: Mapped[str | None] = mapped_column(String(66), unique=True)
+    registration_transaction_hash: Mapped[str | None] = mapped_column(String(66), unique=True)
     version: Mapped[int] = mapped_column(Integer, default=1)
     parties: Mapped[list["DealParty"]] = relationship(
         back_populates="deal", cascade="all, delete-orphan"
@@ -171,7 +172,25 @@ class DealParty(Base, UUIDMixin, TimestampMixin):
     user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"))
     role: Mapped[DealRole] = mapped_column(Enum(DealRole))
     permissions: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    wallet_address: Mapped[str | None] = mapped_column(String(42), index=True)
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    acceptance_transaction_hash: Mapped[str | None] = mapped_column(String(66))
     deal: Mapped[Deal] = relationship(back_populates="parties")
+
+
+class DealInvitation(Base, UUIDMixin, TimestampMixin):
+    __tablename__ = "deal_invitations"
+    __table_args__ = (UniqueConstraint("deal_id", "email", "role"),)
+    deal_id: Mapped[UUID] = mapped_column(ForeignKey("deals.id", ondelete="CASCADE"), index=True)
+    invited_by: Mapped[UUID] = mapped_column(ForeignKey("users.id"))
+    email: Mapped[str] = mapped_column(String(320), index=True)
+    wallet_address: Mapped[str | None] = mapped_column(String(42))
+    role: Mapped[DealRole] = mapped_column(Enum(DealRole))
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    status: Mapped[str] = mapped_column(String(24), default="PENDING", index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    accepted_by: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"))
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class AgreementVersion(Base, UUIDMixin, TimestampMixin):
@@ -204,6 +223,11 @@ class Milestone(Base, UUIDMixin, TimestampMixin):
     rejection_count: Mapped[int] = mapped_column(Integer, default=0)
     acceptance_criteria: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
     due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    submission_note: Mapped[str | None] = mapped_column(Text)
+    submission_hash: Mapped[str | None] = mapped_column(String(66))
+    submission_transaction_hash: Mapped[str | None] = mapped_column(String(66))
+    approval_transaction_hash: Mapped[str | None] = mapped_column(String(66))
+    release_transaction_hash: Mapped[str | None] = mapped_column(String(66))
     deal: Mapped[Deal] = relationship(back_populates="milestones")
 
 

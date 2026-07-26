@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
 
 from app.api.dependencies import CurrentUser
@@ -16,5 +16,11 @@ class EmbeddedWalletOut(BaseModel):
 
 @router.post("/embedded", response_model=EmbeddedWalletOut)
 async def create_embedded_wallet(user: CurrentUser) -> EmbeddedWalletOut:
-    result = await get_wallet_provider().create_wallet(user_id=user.id)
+    provider = get_wallet_provider()
+    if provider is None:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Embedded wallets are temporarily unavailable; use an external wallet",
+        )
+    result = await provider.create_wallet(user_id=user.id)
     return EmbeddedWalletOut(**result.__dict__)

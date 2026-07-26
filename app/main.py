@@ -8,7 +8,19 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import Response
 
-from app.api import auth, deals, evidence, health, wallets
+from app.api import (
+    ai,
+    auth,
+    chain,
+    deals,
+    evidence,
+    health,
+    invitations,
+    messages,
+    wallets,
+    workflow,
+    workspace,
+)
 from app.chat import websocket
 from app.core.config import get_settings
 from app.core.logging import configure_logging
@@ -71,6 +83,18 @@ async def request_context(
     return response
 
 
-for route in (auth.router, deals.router, evidence.router, wallets.router, health.router):
+for route in (
+    auth.router,
+    ai.router,
+    chain.router,
+    deals.router,
+    evidence.router,
+    invitations.router,
+    messages.router,
+    workflow.router,
+    workspace.router,
+    wallets.router,
+    health.router,
+):
     app.include_router(route, prefix=settings.api_prefix)
 app.include_router(websocket.router)

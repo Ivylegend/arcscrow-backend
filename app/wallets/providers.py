@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from typing import Protocol
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import httpx
 
@@ -22,23 +22,6 @@ class EmbeddedWalletProvider(Protocol):
         self, *, provider_id: str, payload: dict[str, object]
     ) -> str: ...
     async def get_transaction_status(self, *, transaction_id: str) -> str: ...
-
-
-class DevelopmentWalletProvider:
-    async def create_wallet(self, *, user_id: UUID) -> EmbeddedWalletResult:
-        suffix = user_id.hex[-40:].rjust(40, "0")
-        return EmbeddedWalletResult(f"dev-{uuid4()}", f"0x{suffix}", "development", True)
-
-    async def get_wallet(self, *, provider_id: str) -> EmbeddedWalletResult:
-        raise LookupError(f"Development wallet {provider_id} is not persistent")
-
-    async def initiate_transaction(self, *, provider_id: str, payload: dict[str, object]) -> str:
-        del provider_id, payload
-        raise RuntimeError("Development wallets cannot create on-chain transactions")
-
-    async def get_transaction_status(self, *, transaction_id: str) -> str:
-        del transaction_id
-        return "SIMULATION_UNAVAILABLE"
 
 
 class CircleWalletProvider:
@@ -76,8 +59,8 @@ class CircleWalletProvider:
         )
 
 
-def get_wallet_provider() -> EmbeddedWalletProvider:
+def get_wallet_provider() -> EmbeddedWalletProvider | None:
     settings = get_settings()
-    if settings.circle_api_key:
+    if settings.circle_embedded_wallet_enabled and settings.circle_api_key:
         return CircleWalletProvider()
-    return DevelopmentWalletProvider()
+    return None

@@ -9,6 +9,7 @@ from app.api.schemas import (
     LoginIn,
     RegisterIn,
     UserOut,
+    WalletLinkIn,
     WalletNonceIn,
     WalletNonceOut,
     WalletVerifyIn,
@@ -149,6 +150,34 @@ async def wallet_verify(payload: WalletVerifyIn, response: Response, db: Db) -> 
         await db.flush()
         db.add(WalletIdentity(user_id=user.id, address=payload.address.lower()))
     return await _new_session(db, response, user)
+
+
+@router.post("/wallet/link", response_model=UserOut)
+async def wallet_link(payload: WalletLinkIn, user: CurrentUser, db: Db) -> User:
+    nonce_row = await db.scalar(
+        select(AuthNonce)
+        .where(
+            AuthNonce.address == payload.address.lower(),
+            AuthNonce.message == payload.message,
+            AuthNonce.consumed_at.is_(None),
+        )
+        .order_by(AuthNonce.expires_at.desc())
+    )
+    now = datetime.now(UTC)
+    if not nonce_row or nonce_row.expires_at.replace(tzinfo=UTC) < now:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Link request expired or already used")
+    if recover_wallet(payload.message, payload.signature) != payload.address.lower():
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Wallet signature is invalid")
+    existing = await db.scalar(
+        select(WalletIdentity).where(WalletIdentity.address == payload.address.lower())
+    )
+    if existing and existing.user_id != user.id:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Wallet belongs to another account")
+    nonce_row.consumed_at = now
+    if not existing:
+        db.add(WalletIdentity(user_id=user.id, address=payload.address.lower()))
+    await db.commit()
+    return user
 
 
 @router.get("/me", response_model=UserOut)

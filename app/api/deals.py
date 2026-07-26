@@ -1,15 +1,25 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
+from eth_hash.auto import keccak
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.api.dependencies import CurrentUser, Db, accessible_deal
 from app.api.schemas import DealCreate, DealOut, FundingIn, TransitionIn
-from app.db.models import Deal, DealParty, DealRole, DealStatus, Milestone, OutboxEvent
+from app.db.models import (
+    AgreementVersion,
+    Deal,
+    DealParty,
+    DealRole,
+    DealStatus,
+    Milestone,
+    OutboxEvent,
+    WalletIdentity,
+)
 from app.deals.service import InvalidDealTransition, apply_funding, transition, validate_allocations
-from app.evidence.service import append_evidence
+from app.evidence.service import append_evidence, canonical_json
 
 router = APIRouter(prefix="/deals", tags=["deals"])
 
@@ -61,6 +71,24 @@ async def create_deal(
         validate_allocations(payload.total_amount, (m.amount for m in payload.milestones))
     except ValueError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
+    buyer_wallet = payload.buyer_wallet_address.lower() if payload.buyer_wallet_address else None
+    if buyer_wallet:
+        identity = await db.scalar(
+            select(WalletIdentity).where(
+                WalletIdentity.user_id == user.id,
+                WalletIdentity.address == buyer_wallet,
+            )
+        )
+        if not identity:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Link the buyer wallet to your account before creating this deal",
+            )
+    terms = payload.model_dump(
+        mode="json",
+        exclude={"buyer_wallet_address", "seller_email", "seller_wallet_address"},
+    )
+    agreement_hash = keccak(canonical_json(terms)).hex()
     deal = Deal(
         title=payload.title,
         description=payload.description,
@@ -73,7 +101,12 @@ async def create_deal(
         funding_threshold_bps=payload.funding_threshold_bps,
     )
     deal.parties.append(
-        DealParty(user_id=user.id, role=DealRole.BUYER, permissions={"manage": True})
+        DealParty(
+            user_id=user.id,
+            role=DealRole.BUYER,
+            permissions={"manage": True},
+            wallet_address=buyer_wallet,
+        )
     )
     for position, milestone in enumerate(payload.milestones):
         deal.milestones.append(
@@ -89,6 +122,16 @@ async def create_deal(
         )
     db.add(deal)
     await db.flush()
+    deal.onchain_deal_id = "0x" + keccak(str(deal.id).encode()).hex()
+    db.add(
+        AgreementVersion(
+            deal_id=deal.id,
+            version=1,
+            structured_terms=terms,
+            content_hash=agreement_hash,
+            created_by=user.id,
+        )
+    )
     db.add(
         OutboxEvent(
             aggregate_type="deal",
@@ -145,14 +188,29 @@ async def record_funding(
     db: Db,
     deal: Deal = Depends(accessible_deal),
 ) -> Deal:
-    if payload.simulated and payload.transaction_hash:
+    if payload.simulated:
         raise HTTPException(
-            status.HTTP_400_BAD_REQUEST, "Simulated funding cannot have a chain hash"
+            status.HTTP_400_BAD_REQUEST, "Simulated funding is not supported"
         )
-    if not payload.simulated and not payload.transaction_hash:
+    if not payload.transaction_hash:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST, "A real funding record requires a transaction hash"
         )
+    from app.api.workflow import _store_event, _verified
+
+    verified = await _verified(
+        transaction_hash=payload.transaction_hash,
+        event_name="DealFunded",
+        event_signature="DealFunded(bytes32,address,uint256,uint256)",
+        deal=deal,
+    )
+    credited = verified.decoded_data.get("credited")
+    if not isinstance(credited, int) or credited != payload.amount:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            "Funding amount does not match the confirmed Arc event",
+        )
+    await _store_event(db, verified)
     try:
         apply_funding(deal, payload.amount)
     except ValueError as exc:
@@ -162,9 +220,9 @@ async def record_funding(
         deal_id=deal.id,
         evidence_type="FUNDING_RECORDED",
         actor_id=user.id,
-        source_entity_type="blockchain_transaction" if not payload.simulated else "demo_event",
-        source_entity_id=payload.transaction_hash or f"sim-{deal.version}",
-        payload={"amount": payload.amount, "simulated": payload.simulated},
+        source_entity_type="blockchain_transaction",
+        source_entity_id=payload.transaction_hash,
+        payload={"amount": payload.amount, "sender": verified.sender},
     )
     await db.commit()
     return deal
