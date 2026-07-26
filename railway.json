@@ -7,8 +7,6 @@
   "deploy": {
     "preDeployCommand": [
       "alembic upgrade head"
-    ],
-    "healthcheckPath": "/api/v1/health",
-    "healthcheckTimeout": 300
+    ]
   }
 }
