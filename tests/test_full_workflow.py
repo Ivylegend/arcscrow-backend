@@ -75,9 +75,13 @@ async def test_complete_deal_lifecycle_uses_persisted_parties_and_verified_event
         },
     )
     assert invitation.status_code == 201, invitation.text
+    invite_token = invitation.json()["accept_token"]
+    preview = await client.get(f"/api/v1/invitations/resolve/{invite_token}")
+    assert preview.status_code == 200, preview.text
+    assert preview.json()["deal_title"] == "Complete Arc workflow"
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as seller:
-        await register(seller, "seller-flow@example.com", "Seller Flow")
+        await register(seller, "wallet-holder@example.com", "Seller Wallet Holder")
         nonce = await seller.post(
             "/api/v1/auth/wallet/nonce",
             json={"address": seller_account.address, "chain_id": 5_042_002},
@@ -97,8 +101,11 @@ async def test_complete_deal_lifecycle_uses_persisted_parties_and_verified_event
             )
         ).status_code == 200
         accepted = await seller.post(
-            f"/api/v1/invitations/{invitation.json()['id']}/accept",
-            json={"wallet_address": seller_account.address},
+            "/api/v1/invitations/accept",
+            json={
+                "token": invite_token,
+                "wallet_address": seller_account.address,
+            },
         )
         assert accepted.status_code == 200, accepted.text
 

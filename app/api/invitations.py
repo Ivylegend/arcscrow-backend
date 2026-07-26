@@ -10,6 +10,7 @@ from app.api.schemas import (
     InvitationAcceptById,
     InvitationCreate,
     InvitationOut,
+    InvitationPreviewOut,
 )
 from app.core.security import random_token, token_hash
 from app.db.models import (
@@ -139,6 +140,30 @@ async def my_invitations(user: CurrentUser, db: Db) -> list[DealInvitation]:
     )
 
 
+@router.get("/invitations/resolve/{token}", response_model=InvitationPreviewOut)
+async def resolve_invitation(token: str, db: Db) -> InvitationPreviewOut:
+    invitation = await db.scalar(
+        select(DealInvitation).where(DealInvitation.token_hash == token_hash(token))
+    )
+    now = datetime.now(UTC)
+    if not invitation or invitation.status != "PENDING":
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Invitation is invalid or already used")
+    if invitation.expires_at.replace(tzinfo=UTC) < now:
+        raise HTTPException(status.HTTP_410_GONE, "Invitation expired")
+    deal = await db.get(Deal, invitation.deal_id)
+    if not deal:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Invited deal no longer exists")
+    return InvitationPreviewOut(
+        deal_id=deal.id,
+        deal_title=deal.title,
+        email=invitation.email,
+        wallet_address=invitation.wallet_address,
+        role=invitation.role,
+        status=invitation.status,
+        expires_at=invitation.expires_at,
+    )
+
+
 @router.post("/invitations/accept", response_model=InvitationOut)
 async def accept_invitation(
     payload: InvitationAccept,
@@ -177,23 +202,41 @@ async def _accept(
         invitation.status = "EXPIRED"
         await db.commit()
         raise HTTPException(status.HTTP_410_GONE, "Invitation expired")
-    if not user.email or user.email.lower() != invitation.email:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Sign in with the invited email")
-
-    wallet_address = supplied_wallet or invitation.wallet_address
-    if wallet_address:
-        wallet_address = wallet_address.lower()
+    email_matches = bool(user.email and user.email.lower() == invitation.email)
+    supplied_wallet = supplied_wallet.lower() if supplied_wallet else None
+    if (
+        supplied_wallet
+        and invitation.wallet_address
+        and supplied_wallet != invitation.wallet_address.lower()
+    ):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "The connected wallet does not match this invitation",
+        )
+    wallet_matches = False
+    if supplied_wallet:
         identity = await db.scalar(
             select(WalletIdentity).where(
                 WalletIdentity.user_id == user.id,
-                WalletIdentity.address == wallet_address,
+                WalletIdentity.address == supplied_wallet,
             )
         )
-        if not identity:
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                "Link the invited wallet to your account before accepting",
-            )
+        wallet_matches = bool(
+            identity
+            and invitation.wallet_address
+            and supplied_wallet == invitation.wallet_address.lower()
+        )
+    if not email_matches and not wallet_matches:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Sign in with the invited email or prove control of the invited wallet",
+        )
+
+    wallet_address = (
+        invitation.wallet_address.lower()
+        if invitation.wallet_address
+        else supplied_wallet
+    )
     exists = await db.scalar(
         select(DealParty.id).where(
             DealParty.deal_id == invitation.deal_id,

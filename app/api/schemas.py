@@ -171,6 +171,16 @@ class InvitationOut(BaseModel):
     accept_token: str | None = None
 
 
+class InvitationPreviewOut(BaseModel):
+    deal_id: UUID
+    deal_title: str
+    email: str
+    wallet_address: str | None
+    role: DealRole
+    status: str
+    expires_at: datetime
+
+
 class InvitationAccept(BaseModel):
     token: str = Field(min_length=32, max_length=256)
     wallet_address: str | None = Field(default=None, pattern=r"^0x[a-fA-F0-9]{40}$")
