@@ -1,6 +1,6 @@
 from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, HTTPException, Request, Response, status
+from fastapi import APIRouter, Cookie, HTTPException, Request, Response, status
 from sqlalchemy import select
 
 from app.api.dependencies import CurrentUser, Db
@@ -29,17 +29,9 @@ from app.db.models import AuthNonce, Session, User, WalletIdentity
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
-async def _new_session(db: Db, response: Response, user: User) -> AuthOut:
-    refresh = random_token()
-    session = Session(
-        user_id=user.id,
-        refresh_hash=token_hash(refresh),
-        expires_at=datetime.now(UTC) + timedelta(days=30),
-    )
-    db.add(session)
-    await db.flush()
-    access = issue_session(user.id, session.id)
+def _set_access_cookie(response: Response, user: User, session: Session) -> None:
     settings = get_settings()
+    access = issue_session(user.id, session.id)
     response.set_cookie(
         "arcscrow_session",
         access,
@@ -49,6 +41,37 @@ async def _new_session(db: Db, response: Response, user: User) -> AuthOut:
         max_age=900,
         path="/",
     )
+
+
+def _set_csrf_cookie(response: Response) -> str:
+    settings = get_settings()
+    csrf = random_token()
+    response.set_cookie(
+        "arcscrow_csrf",
+        csrf,
+        secure=settings.cookie_secure,
+        samesite=settings.cookie_samesite,
+    )
+    return csrf
+
+
+async def _finish_auth(response: Response, user: User, session: Session) -> AuthOut:
+    _set_access_cookie(response, user, session)
+    csrf = _set_csrf_cookie(response)
+    return AuthOut(user=UserOut.model_validate(user), csrf_token=csrf)
+
+
+async def _new_session(db: Db, response: Response, user: User) -> AuthOut:
+    settings = get_settings()
+    refresh = random_token()
+    session = Session(
+        user_id=user.id,
+        refresh_hash=token_hash(refresh),
+        expires_at=datetime.now(UTC) + timedelta(days=30),
+    )
+    db.add(session)
+    await db.flush()
+    _set_access_cookie(response, user, session)
     response.set_cookie(
         "arcscrow_refresh",
         refresh,
@@ -58,13 +81,7 @@ async def _new_session(db: Db, response: Response, user: User) -> AuthOut:
         max_age=2_592_000,
         path=f"{settings.api_prefix}/auth",
     )
-    csrf = random_token()
-    response.set_cookie(
-        "arcscrow_csrf",
-        csrf,
-        secure=settings.cookie_secure,
-        samesite=settings.cookie_samesite,
-    )
+    csrf = _set_csrf_cookie(response)
     await db.commit()
     return AuthOut(user=UserOut.model_validate(user), csrf_token=csrf)
 
@@ -185,8 +202,43 @@ async def me(user: CurrentUser) -> User:
     return user
 
 
+@router.post("/refresh", response_model=AuthOut)
+async def refresh_session(
+    response: Response,
+    db: Db,
+    arcscrow_refresh: str | None = Cookie(default=None),
+) -> AuthOut:
+    if not arcscrow_refresh:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Authentication required")
+    session = await db.scalar(
+        select(Session).where(Session.refresh_hash == token_hash(arcscrow_refresh))
+    )
+    now = datetime.now(UTC)
+    if (
+        not session
+        or session.revoked_at is not None
+        or session.expires_at.replace(tzinfo=UTC) < now
+    ):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Session expired or revoked")
+    user = await db.get(User, session.user_id)
+    if not user or not user.is_active:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Account is unavailable")
+    return await _finish_auth(response, user, session)
+
+
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
 async def logout(response: Response, user: CurrentUser, db: Db) -> None:
     del user, db
-    response.delete_cookie("arcscrow_session", path="/")
-    response.delete_cookie("arcscrow_refresh", path=f"{get_settings().api_prefix}/auth")
+    settings = get_settings()
+    response.delete_cookie(
+        "arcscrow_session",
+        path="/",
+        secure=settings.cookie_secure,
+        samesite=settings.cookie_samesite,
+    )
+    response.delete_cookie(
+        "arcscrow_refresh",
+        path=f"{settings.api_prefix}/auth",
+        secure=settings.cookie_secure,
+        samesite=settings.cookie_samesite,
+    )
